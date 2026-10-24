@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Sketchpad</title>
+  <meta name="description" content="A hand-drawn style whiteboard. Draw diagrams, sketch ideas, export to PNG or SVG. Opens and saves .excalidraw files.">
+  <meta name="theme-color" content="#11181c">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <script>
+    // set the theme before first paint
+    try { const t = localStorage.getItem('sketchpad-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <div id="app" class="app">
+    <canvas id="scene" class="layer scene"></canvas>
+    <canvas id="ui" class="layer ui" tabindex="0" aria-label="Drawing canvas"></canvas>
+
+    <div id="welcome" class="welcome" aria-hidden="true">
+      <div class="welcome-mark"><span class="chev">&gt;_</span> sketchpad</div>
+      <p>Pick a tool and start drawing.</p>
+      <ul>
+        <li><kbd>R</kbd> rectangle</li><li><kbd>A</kbd> arrow</li><li><kbd>T</kbd> text</li><li><kbd>P</kbd> pencil</li><li><kbd>?</kbd> all shortcuts</li>
+      </ul>
+      <p class="small">Your drawing saves in this browser as you go.</p>
+    </div>
+
+    <div class="top">
+      <div class="top-left">
+        <button id="menuBtn" class="icon-btn island" title="Menu" aria-haspopup="true" aria-expanded="false"></button>
+        <div id="menu" class="menu island" hidden role="menu">
+          <div class="menu-brand"><span class="chev">&gt;_</span> sketchpad</div>
+          <button data-cmd="open" role="menuitem"><i data-icon="open"></i>Open<kbd>Ctrl+O</kbd></button>
+          <button data-cmd="save" role="menuitem"><i data-icon="save"></i>Save to file<kbd>Ctrl+S</kbd></button>
+          <button data-cmd="export" role="menuitem"><i data-icon="export"></i>Export image<kbd>Ctrl+Shift+E</kbd></button>
+          <button data-cmd="share" role="menuitem"><i data-icon="link"></i>Copy share link</button>
+          <button data-cmd="reset" role="menuitem" class="danger"><i data-icon="trash"></i>Reset the canvas</button>
+          <hr>
+          <button data-cmd="theme" role="menuitem"><i data-icon="moon" id="themeIcon"></i><span id="themeLabel">Dark mode</span><kbd>Alt+Shift+D</kbd></button>
+          <button data-cmd="grid" role="menuitem"><i data-icon="grid"></i><span id="gridLabel">Show grid</span><kbd>Ctrl+'</kbd></button>
+          <div class="menu-sub">Canvas background</div>
+          <div class="swatches" id="bgSwatches"></div>
+          <hr>
+          <button data-cmd="help" role="menuitem"><i data-icon="help"></i>Help and shortcuts<kbd>?</kbd></button>
+          <a href="https://github.com/bhxuk/Sketchpad" target="_blank" rel="noopener" role="menuitem"><i data-icon="github"></i>GitHub</a>
+        </div>
+      </div>
+
+      <div class="toolbar island" role="toolbar" aria-label="Tools">
+        <button id="lockBtn" class="tool lock" title="Keep the tool selected after drawing (Q)" aria-pressed="false"></button>
+        <span class="sep"></span>
+        <div id="tools" class="tools"></div>
+      </div>
+
+      <div class="top-right">
+        <button id="libraryBtn" class="pill-btn island" title="Library"><i data-icon="library"></i><span>Library</span></button>
+      </div>
+    </div>
+
+    <aside id="props" class="props island" hidden aria-label="Style"></aside>
+    <button id="propsToggle" class="icon-btn island props-toggle" title="Styles" hidden></button>
+
+    <div class="bottom">
+      <div class="bottom-left">
+        <div class="group island">
+          <button id="zoomOut" class="icon-btn" title="Zoom out (Ctrl+-)"></button>
+          <button id="zoomLabel" class="zoom-label" title="Reset zoom (Ctrl+0)">100%</button>
+          <button id="zoomIn" class="icon-btn" title="Zoom in (Ctrl+=)"></button>
+        </div>
+        <div class="group island">
+          <button id="undoBtn" class="icon-btn" title="Undo (Ctrl+Z)"></button>
+          <button id="redoBtn" class="icon-btn" title="Redo (Ctrl+Shift+Z)"></button>
+        </div>
+      </div>
+      <button id="scrollBack" class="pill-btn island accent" hidden>Scroll back to content</button>
+      <button id="helpBtn" class="icon-btn island" title="Help (?)"></button>
+    </div>
+
+    <aside id="library" class="library island" hidden aria-label="Library">
+      <header>
+        <h2>Library</h2>
+        <button id="libraryClose" class="icon-btn" title="Close"></button>
+      </header>
+      <button id="libraryAdd" class="pill-btn wide" disabled><i data-icon="plusSquare"></i>Add selection to library</button>
+      <div id="libraryItems" class="library-items"></div>
+      <p id="libraryEmpty" class="muted">Select something on the canvas and add it here. Click an item to drop it into your drawing.</p>
+    </aside>
+
+    <div id="ctxmenu" class="ctxmenu island" hidden role="menu"></div>
+    <textarea id="textEditor" class="text-editor" hidden spellcheck="false" autocomplete="off" wrap="off"></textarea>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <input type="file" id="fileInput" accept=".excalidraw,.sketchpad,.json,application/json" hidden>
+    <input type="file" id="imageInput" accept="image/*" hidden>
+  </div>
+
+  <dialog id="exportDialog" class="dialog wide">
+    <header><h2>Export image</h2><button class="icon-btn" data-close title="Close"></button></header>
+    <div class="export-body">
+      <div class="export-preview"><canvas id="exportPreview"></canvas></div>
+      <div class="export-opts">
+        <label class="check"><input type="checkbox" id="expBg" checked> Background</label>
+        <label class="check"><input type="checkbox" id="expDark"> Dark mode</label>
+        <label class="check" id="expSelWrap"><input type="checkbox" id="expSel"> Only selected</label>
+        <div class="field">
+          <span>Scale</span>
+          <div class="seg" id="expScale">
+            <button data-v="1">1×</button><button data-v="2" class="on">2×</button><button data-v="3">3×</button>
+          </div>
+        </div>
+        <div class="export-actions">
+          <button class="btn primary" id="expPng"><i data-icon="save"></i>PNG</button>
+          <button class="btn" id="expSvg"><i data-icon="save"></i>SVG</button>
+          <button class="btn" id="expCopy"><i data-icon="duplicate"></i>Copy to clipboard</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="helpDialog" class="dialog wide">
+    <header><h2>Help and shortcuts</h2><button class="icon-btn" data-close title="Close"></button></header>
+    <div class="help-grid" id="helpGrid"></div>
+  </dialog>
+
+  <dialog id="confirmDialog" class="dialog">
+    <header><h2 id="confirmTitle">Are you sure?</h2></header>
+    <p id="confirmText"></p>
+    <div class="dialog-actions">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn danger" id="confirmOk">Confirm</button>
+    </div>
+  </dialog>
+
+  <script src="vendor/rough.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
