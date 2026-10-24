@@ -690,7 +690,7 @@
       case 'selection': return selectionDown(px, py, e);
       case 'rectangle': case 'diamond': case 'ellipse': return shapeDown(px, py);
       case 'line': case 'arrow': return linearDown(px, py, e);
-      case 'freedraw': return freedrawDown(px, py);
+      case 'freedraw': return freedrawDown(px, py, e);
       case 'text': state.action = { type: 'textPlace', x: px, y: py }; return;
       case 'image': state.action = { type: 'imagePlace', x: px, y: py }; return;
       case 'eraser': state.erasing = new Set(); state.action = { type: 'erase', lx: px, ly: py }; eraseAt(px, py); scheduleRender(); return;
@@ -792,12 +792,15 @@
     el.points = [[0, 0], [0, 0]];
     state.elements.push(el);
     state.selected.clear();
-    state.action = { type: 'createLinear', id: el.id, sx: e.clientX, sy: e.clientY };
+    const startTarget = el.type === 'arrow' ? bindableAt(px, py, el.id) : null;
+    state.action = { type: 'createLinear', id: el.id, sx: e.clientX, sy: e.clientY, ox: x, oy: y, startTarget };
     onSelectionChange();
   }
 
-  function freedrawDown(px, py) {
+  function freedrawDown(px, py, e) {
     const el = newElement('freedraw', px, py);
+    el.simulatePressure = e.pointerType !== 'pen';
+    el.pressures = el.simulatePressure ? [] : [e.pressure || 0.5];
     state.elements.push(el);
     state.selected.clear();
     state.action = { type: 'freedraw', id: el.id };
@@ -853,11 +856,20 @@
         break;
       }
       case 'createLinear': {
+        // start again from the press point each move, then snap the ends onto shapes live
         const el = getEl(a.id);
-        let [x, y] = e.shiftKey ? angleSnap(el.x, el.y, px, py) : [snap(px), snap(py)];
-        el.points[1] = [x - el.x, y - el.y];
-        SP.mutate(el);
-        setBindHover(el.type === 'arrow' ? bindableAt(x, y, el.id) : null);
+        let [x, y] = e.shiftKey ? angleSnap(a.ox, a.oy, px, py) : [snap(px), snap(py)];
+        el.x = a.ox; el.y = a.oy;
+        el.points = [[0, 0], [x - a.ox, y - a.oy]];
+        if (el.type === 'arrow') {
+          const t = bindableAt(x, y, el.id);
+          setBindHover(t);
+          const s0 = a.startTarget && getEl(a.startTarget.id) && a.startTarget !== t ? a.startTarget : null;
+          el.startBinding = s0 ? { elementId: s0.id, focus: 0, gap: 6 } : null;
+          el.endBinding = t && t !== a.startTarget ? { elementId: t.id, focus: 0, gap: 6 } : null;
+          SP.mutate(el);
+          updateArrowBinding(el);
+        } else SP.mutate(el);
         break;
       }
       case 'freedraw': {
@@ -867,7 +879,10 @@
           const [qx, qy] = toScene(ev.clientX, ev.clientY);
           const last = el.points[el.points.length - 1];
           const nx = qx - el.x, ny = qy - el.y;
-          if (Math.hypot(nx - last[0], ny - last[1]) * state.view.zoom >= 1) el.points.push([nx, ny]);
+          if (Math.hypot(nx - last[0], ny - last[1]) * state.view.zoom >= 1) {
+            el.points.push([nx, ny]);
+            if (!el.simulatePressure) el.pressures.push(ev.pressure || 0.5);
+          }
         }
         SP.mutate(el);
         break;
@@ -1113,10 +1128,12 @@
         if (!el) break;
         if (Math.hypot(e.clientX - a.sx, e.clientY - a.sy) < 5) {
           // click without drag: keep adding points with each click
+          el.x = a.ox; el.y = a.oy;
           el.points = [[0, 0], [0, 0]];
+          if (el.type === 'arrow') { el.startBinding = null; el.endBinding = null; }
           SP.mutate(el);
           state.multi = { id: el.id };
-        } else finishLinear(el);
+        } else finishLinear(el, true);
         break;
       }
       case 'freedraw': {
@@ -1182,13 +1199,14 @@
     commit();
   }
 
-  function finishLinear(el) {
+  function finishLinear(el, bindingsSet) {
     setBindHover(null);
     // drop repeated points
     el.points = el.points.filter((p, i, arr) => i === 0 || Math.hypot(p[0] - arr[i - 1][0], p[1] - arr[i - 1][1]) > 0.5);
     if (el.points.length < 2) { removeElements([el.id]); commit(); return; }
     SP.mutate(el);
-    tryBind(el);
+    if (bindingsSet) updateArrowBinding(el);
+    else tryBind(el);
     afterCreate(el);
   }
 

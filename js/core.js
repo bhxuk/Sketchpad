@@ -183,10 +183,10 @@
   }
 
   function roughness(el, w, h) {
-    let r = el.roughness;
-    const m = Math.min(Math.abs(w), Math.abs(h));
-    if (m < 20 && r > 0 && !SP.isLinear(el)) r = r * Math.max(0.3, m / 20);
-    return r;
+    const r = el.roughness;
+    const max = Math.max(Math.abs(w), Math.abs(h)), min = Math.min(Math.abs(w), Math.abs(h));
+    if ((min >= 20 && max >= 50) || min >= 15 || SP.isLinear(el)) return r;
+    return Math.min(r / (max < 10 ? 3 : 2), 2.5);
   }
 
   function opts(el, fill, w, h) {
@@ -196,7 +196,6 @@
       strokeWidth: el.strokeStyle !== 'solid' ? sw + 0.5 : sw,
       roughness: roughness(el, w, h),
       stroke: el.strokeColor === 'transparent' ? 'none' : el.strokeColor,
-      bowing: 1,
       fillWeight: sw / 2,
       hachureGap: sw * 4,
       disableMultiStroke: el.strokeStyle !== 'solid',
@@ -212,56 +211,88 @@
   }
 
   function roundRectPath(w, h) {
-    const r = Math.min(32, Math.min(w, h) * 0.25);
-    return `M ${r} 0 L ${w - r} 0 Q ${w} 0, ${w} ${r} L ${w} ${h - r} Q ${w} ${h}, ${w - r} ${h} L ${r} ${h} Q 0 ${h}, 0 ${h - r} L 0 ${r} Q 0 0, ${r} 0 Z`;
+    const r = cornerRadius(Math.min(w, h));
+    return `M ${r} 0 L ${w - r} 0 Q ${w} 0, ${w} ${r} L ${w} ${h - r} Q ${w} ${h}, ${w - r} ${h} L ${r} ${h} Q 0 ${h}, 0 ${h - r} L 0 ${r} Q 0 0, ${r} 0`;
   }
 
-  function roundPolyPath(v) {
-    const n = v.length;
-    const edge = Math.hypot(v[1][0] - v[0][0], v[1][1] - v[0][1]);
-    const r = Math.min(32, edge * 0.25);
-    const along = (a, b, d) => {
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-      return [a[0] + ((b[0] - a[0]) * d) / len, a[1] + ((b[1] - a[1]) * d) / len];
+  /* same corner rule as Excalidraw: a quarter of the side, capped at 32 */
+  const cornerRadius = (x) => (x <= 128 ? x * 0.25 : 32);
+
+  function roundDiamondPath(w, h) {
+    const tx = w / 2, ty = 0, rx = w, ry = h / 2, bx = w / 2, by = h, lx = 0, ly = h / 2;
+    const vr = cornerRadius(Math.abs(tx - lx)), hr = cornerRadius(Math.abs(ry - ty));
+    return `M ${tx + vr} ${ty + hr} L ${rx - vr} ${ry - hr}
+      C ${rx} ${ry}, ${rx} ${ry}, ${rx - vr} ${ry + hr}
+      L ${bx + vr} ${by - hr}
+      C ${bx} ${by}, ${bx} ${by}, ${bx - vr} ${by - hr}
+      L ${lx + vr} ${ly + hr}
+      C ${lx} ${ly}, ${lx} ${ly}, ${lx + vr} ${ly - hr}
+      L ${tx - vr} ${ty + hr}
+      C ${tx} ${ty}, ${tx} ${ty}, ${tx + vr} ${ty + hr}`;
+  }
+
+  const HEAD_SIZE = { arrow: 25, bar: 15, dot: 15, circle: 15, circle_outline: 15, triangle: 15, triangle_outline: 15 };
+  const HEAD_ANGLE = { arrow: 20, bar: 90 };
+
+  /* tip and a point a little way back along the drawn shaft, from rough.js ops */
+  function shaftEnds(shaft, pts) {
+    const ops = (shaft && shaft.sets && shaft.sets[0] && shaft.sets[0].ops) || [];
+    const bez = (p0, c1, c2, p3, t) => {
+      const u = 1 - t;
+      return [u * u * u * p0[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * p3[0],
+              u * u * u * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * p3[1]];
     };
-    let d = '';
-    for (let i = 0; i < n; i++) {
-      const prev = v[(i - 1 + n) % n], cur = v[i], next = v[(i + 1) % n];
-      const p1 = along(cur, prev, r), p2 = along(cur, next, r);
-      d += (i === 0 ? `M ${p1[0]} ${p1[1]} ` : `L ${p1[0]} ${p1[1]} `) + `Q ${cur[0]} ${cur[1]}, ${p2[0]} ${p2[1]} `;
+    let first = null, last = null, cur = null;
+    for (const op of ops) {
+      if (op.op === 'move') cur = [op.data[0], op.data[1]];
+      else if (op.op === 'bcurveTo' && cur) {
+        const d = op.data, seg = { p0: cur, c1: [d[0], d[1]], c2: [d[2], d[3]], p3: [d[4], d[5]] };
+        if (!first) first = seg;
+        last = seg;
+        cur = seg.p3;
+      }
     }
-    return d + 'Z';
+    const n = pts.length;
+    const end = last ? { tip: last.p3, back: bez(last.p0, last.c1, last.c2, last.p3, 0.7) } : { tip: pts[n - 1], back: pts[n - 2] };
+    const start = first ? { tip: first.p0, back: bez(first.p0, first.c1, first.c2, first.p3, 0.3) } : { tip: pts[0], back: pts[1] };
+    return { start, end };
   }
 
-  SP.arrowheadLength = (el, total) => Math.min(18 + el.strokeWidth * 2.5, total * 0.4);
-
-  function arrowheads(el, o) {
+  function arrowheads(el, o, shaft) {
     const pts = el.points, n = pts.length, out = [];
     if (n < 2) return out;
-    let total = 0;
-    for (let i = 1; i < n; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-    const ho = Object.assign({}, o, { strokeLineDash: undefined, fill: undefined, fillStyle: undefined, disableMultiStroke: false });
-    const solid = Object.assign({}, ho, { fill: el.strokeColor, fillStyle: 'solid' });
-    const make = (pos, prev, kind) => {
+    const ends = shaftEnds(shaft, pts);
+    const headOpts = Object.assign({}, o, { fill: undefined, fillStyle: undefined, roughness: Math.min(1, o.roughness || 0), disableMultiStroke: false });
+    if (el.strokeStyle === 'dotted') headOpts.strokeLineDash = [1.5, 5 + el.strokeWidth];
+    else delete headOpts.strokeLineDash;
+    const make = (kind, e, segLen) => {
       if (!kind) return;
-      const dx = pos[0] - prev[0], dy = pos[1] - prev[1];
-      if (!dx && !dy) return;
-      const a = Math.atan2(dy, dx);
-      const len = SP.arrowheadLength(el, total);
-      const sp = 0.45;
-      const p1 = [pos[0] - len * Math.cos(a - sp), pos[1] - len * Math.sin(a - sp)];
-      const p2 = [pos[0] - len * Math.cos(a + sp), pos[1] - len * Math.sin(a + sp)];
-      if (kind === 'triangle') out.push(gen.polygon([pos, p1, p2], solid));
-      else if (kind === 'triangle_outline') out.push(gen.polygon([pos, p1, p2], ho));
-      else if (kind === 'dot' || kind === 'circle') out.push(gen.circle(pos[0], pos[1], len * 0.6, solid));
-      else if (kind === 'circle_outline') out.push(gen.circle(pos[0], pos[1], len * 0.6, ho));
-      else if (kind === 'bar') {
-        const h = len * 0.5, px = -Math.sin(a) * h, py = Math.cos(a) * h;
-        out.push(gen.line(pos[0] + px, pos[1] + py, pos[0] - px, pos[1] - py, ho));
-      } else out.push(gen.linearPath([p1, pos, p2], ho));
+      const [x2, y2] = e.tip, [x1, y1] = e.back;
+      const dist = Math.hypot(x2 - x1, y2 - y1) || 1;
+      const nx = (x2 - x1) / dist, ny = (y2 - y1) / dist;
+      const size = Math.min(HEAD_SIZE[kind] || 15, segLen * 0.5);
+      const xs = x2 - nx * size, ys = y2 - ny * size;
+      if (kind === 'dot' || kind === 'circle' || kind === 'circle_outline') {
+        const diameter = Math.hypot(ys - y2, xs - x2) + el.strokeWidth - 2;
+        const fill = kind === 'circle_outline' ? undefined : el.strokeColor;
+        out.push(gen.circle(x2, y2, diameter, Object.assign({}, headOpts, { fill, fillStyle: 'solid', strokeLineDash: undefined })));
+        return;
+      }
+      const a = ((HEAD_ANGLE[kind] || 25) * Math.PI) / 180;
+      const [x3, y3] = rotate(xs, ys, x2, y2, -a);
+      const [x4, y4] = rotate(xs, ys, x2, y2, a);
+      if (kind === 'triangle' || kind === 'triangle_outline') {
+        out.push(gen.polygon([[x2, y2], [x3, y3], [x4, y4]], Object.assign({}, headOpts, kind === 'triangle' ? { fill: el.strokeColor, fillStyle: 'solid' } : {}, { strokeLineDash: undefined })));
+      } else {
+        // arrow and bar: two strokes meeting at the tip, as Excalidraw draws them
+        out.push(gen.line(x3, y3, x2, y2, headOpts));
+        if (kind !== 'bar') out.push(gen.line(x4, y4, x2, y2, headOpts));
+        else out.push(gen.line(x2, y2, x4, y4, headOpts));
+      }
     };
-    make(pts[n - 1], pts[n - 2], el.endArrowhead);
-    make(pts[0], pts[1], el.startArrowhead);
+    const segLen = (i, j) => Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
+    make(el.endArrowhead, ends.end, segLen(n - 1, n - 2));
+    make(el.startArrowhead, ends.start, segLen(0, 1));
     return out;
   }
 
@@ -279,9 +310,9 @@
     } else if (el.type === 'diamond') {
       const o = opts(el, true, w, h);
       const v = [[w / 2, 0], [w, h / 2], [w / 2, h], [0, h / 2]];
-      d = [el.roundness ? gen.path(roundPolyPath(v), o) : gen.polygon(v, o)];
+      d = [el.roundness ? gen.path(roundDiamondPath(w, h), o) : gen.polygon(v, o)];
     } else if (el.type === 'ellipse') {
-      d = [gen.ellipse(w / 2, h / 2, w, h, opts(el, true, w, h))];
+      d = [gen.ellipse(w / 2, h / 2, w, h, Object.assign(opts(el, true, w, h), { curveFitting: 1 }))];
     } else if (SP.isLinear(el)) {
       const pts = el.points;
       if (pts.length >= 2) {
@@ -290,29 +321,40 @@
         if (closed && !el.roundness) d.push(gen.polygon(pts.slice(0, -1), o));
         else if (el.roundness && pts.length > 2) d.push(gen.curve(pts, o));
         else d.push(gen.linearPath(pts, o));
-        if (el.type === 'arrow') d.push(...arrowheads(el, o));
+        if (el.type === 'arrow') d.push(...arrowheads(el, o, d[0]));
       }
     }
     cache.set(el.id, { key: el.versionNonce, d });
     return d;
   };
 
+  /* pencil strokes: perfect-freehand outline with Excalidraw's settings, filled */
+  function strokeOutline(el) {
+    const pts = el.points.map((p, i) => [p[0], p[1], el.pressures && el.pressures[i] != null ? el.pressures[i] : 0.5]);
+    if (!window.PerfectFreehand) return pts;
+    return PerfectFreehand.getStroke(pts, {
+      simulatePressure: el.simulatePressure !== false,
+      size: el.strokeWidth * 4.25,
+      thinning: 0.6,
+      smoothing: 0.5,
+      streamline: 0.5,
+      easing: (t) => Math.sin((t * Math.PI) / 2),
+      last: true,
+    });
+  }
   SP.freedrawPathData = function (el) {
-    const p = el.points;
-    if (!p.length) return '';
-    if (p.length < 3) {
-      const a = p[0], b = p[p.length - 1];
-      return `M ${a[0]} ${a[1]} L ${b[0] + 0.01} ${b[1]}`;
+    const o = strokeOutline(el);
+    if (!o.length) return '';
+    const med = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const max = o.length - 1;
+    let d = `M ${o[0][0].toFixed(2)} ${o[0][1].toFixed(2)} Q`;
+    for (let i = 0; i < max; i++) {
+      const m = med(o[i], o[i + 1]);
+      d += ` ${o[i][0].toFixed(2)} ${o[i][1].toFixed(2)} ${m[0].toFixed(2)} ${m[1].toFixed(2)}`;
     }
-    let d = `M ${p[0][0]} ${p[0][1]} `;
-    for (let i = 1; i < p.length - 1; i++) {
-      const mx = (p[i][0] + p[i + 1][0]) / 2, my = (p[i][1] + p[i + 1][1]) / 2;
-      d += `Q ${p[i][0]} ${p[i][1]}, ${mx} ${my} `;
-    }
-    const l = p[p.length - 1];
-    return d + `L ${l[0]} ${l[1]}`;
+    return d + ' Z';
   };
-  SP.freedrawWidth = (el) => el.strokeWidth * 1.75 + 1;
+  SP.freedrawWidth = (el) => el.strokeWidth * 4.25;
 
   const pathCache = new Map();
   function freedrawPath(el) {
@@ -350,10 +392,8 @@
     if (el.angle) ctx.rotate(el.angle);
     ctx.translate(el.x - cx, el.y - cy);
     if (el.type === 'freedraw') {
-      ctx.strokeStyle = el.strokeColor;
-      ctx.lineWidth = SP.freedrawWidth(el);
-      ctx.lineCap = ctx.lineJoin = 'round';
-      ctx.stroke(freedrawPath(el));
+      ctx.fillStyle = el.strokeColor;
+      ctx.fill(freedrawPath(el));
     } else if (el.type === 'text') {
       ctx.font = SP.fontString(el);
       ctx.fillStyle = el.strokeColor;
@@ -375,6 +415,8 @@
         ctx.fillRect(0, 0, el.width, el.height);
       }
     } else {
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
       for (const d of SP.getDrawables(el)) rc.draw(d);
     }
     ctx.restore();
@@ -624,14 +666,13 @@
       const g = document.createElementNS(NS, 'g');
       g.setAttribute('transform', `translate(${cx} ${cy}) rotate(${((el.angle || 0) * 180) / Math.PI}) translate(${el.x - cx} ${el.y - cy})`);
       if (el.opacity != null && el.opacity < 100) g.setAttribute('opacity', el.opacity / 100);
+      g.setAttribute('stroke-linecap', 'round');
+      g.setAttribute('stroke-linejoin', 'round');
       if (el.type === 'freedraw') {
         const p = document.createElementNS(NS, 'path');
         p.setAttribute('d', SP.freedrawPathData(el));
-        p.setAttribute('fill', 'none');
-        p.setAttribute('stroke', el.strokeColor);
-        p.setAttribute('stroke-width', SP.freedrawWidth(el));
-        p.setAttribute('stroke-linecap', 'round');
-        p.setAttribute('stroke-linejoin', 'round');
+        p.setAttribute('fill', el.strokeColor);
+        p.setAttribute('stroke', 'none');
         g.appendChild(p);
       } else if (el.type === 'text') {
         const lh = el.fontSize * SP.lineHeight(el);
