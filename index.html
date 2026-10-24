@@ -7,7 +7,7 @@
   <meta name="description" content="A hand-drawn style whiteboard. Draw diagrams, sketch ideas, export to PNG or SVG. Opens and saves .excalidraw files.">
   <meta name="theme-color" content="#11181c">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/app.css?v=1.1.0">
   <script>
     // set the theme before first paint
     try { const t = localStorage.getItem('sketchpad-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
@@ -44,6 +44,7 @@
           <div class="swatches" id="bgSwatches"></div>
           <hr>
           <button data-cmd="help" role="menuitem"><i data-icon="help"></i>Help and shortcuts<kbd>?</kbd></button>
+          <a href="https://bhxuk.com/sketchpad/about/" target="_blank" rel="noopener" role="menuitem"><i data-icon="library"></i>Examples and guide</a>
           <a href="https://github.com/bhxuk/Sketchpad" target="_blank" rel="noopener" role="menuitem"><i data-icon="github"></i>GitHub</a>
         </div>
       </div>
@@ -133,9 +134,9 @@
     </div>
   </dialog>
 
-  <script src="vendor/rough.js"></script>
-  <script src="js/icons.js"></script>
-  <script src="js/core.js"></script>
-  <script src="js/app.js"></script>
+  <script src="vendor/rough.js?v=1.1.0"></script>
+  <script src="js/icons.js?v=1.1.0"></script>
+  <script src="js/core.js?v=1.1.0"></script>
+  <script src="js/app.js?v=1.1.0"></script>
 </body>
 </html>

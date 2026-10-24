@@ -1757,10 +1757,17 @@
     }
     state.selected.clear();
     state.multi = null;
+    layoutAll();
     onSelectionChange();
     zoomToFit();
     commit();
     renderMenu();
+    // lay text out again once the handwriting font has loaded, without adding an undo step
+    whenFontsReady(() => {
+      layoutAll();
+      history.stack[history.index] = snapshot();
+      scheduleSave();
+    });
   }
 
   function exportElements() {
@@ -1882,14 +1889,22 @@
   }
 
   async function loadFromHash() {
+    const ex = location.hash.match(/^#example=([a-z0-9-]{1,40})$/);
     const m = location.hash.match(/^#scene=(.+)$/);
-    if (!m) return;
+    if (!ex && !m) return;
     try {
-      const json = await decodeScene(m[1]);
-      loadScene(SP.parseScene(json));
-      toast('Opened a shared drawing. Undo brings back what was here before.', 5000);
+      if (ex) {
+        const res = await fetch(`examples/${ex[1]}.excalidraw`, { cache: 'no-cache' });
+        if (!res.ok) throw new Error('missing');
+        loadScene(SP.parseScene(await res.text()));
+        toast('Opened an example. Undo brings back what was here before.', 5000);
+      } else {
+        const json = await decodeScene(m[1]);
+        loadScene(SP.parseScene(json));
+        toast('Opened a shared drawing. Undo brings back what was here before.', 5000);
+      }
     } catch (e) {
-      toast('That share link is damaged and could not be opened.');
+      toast(ex ? 'That example could not be found.' : 'That share link is damaged and could not be opened.');
     }
     window.history.replaceState(null, '', location.href.split('#')[0]);
   }
@@ -2511,13 +2526,31 @@
     for (const el of (root || document).querySelectorAll('[data-icon]')) el.innerHTML = I[el.dataset.icon] || '';
   }
 
-  function remeasureTexts() {
+  /* re-measure every text and re-attach every arrow, e.g. after opening a file */
+  function layoutAll() {
     for (const el of state.elements) {
       if (el.type !== 'text') continue;
       if (el.containerId) { const c = getEl(el.containerId); if (c) updateBoundText(c); }
-      else measureFreeText(el);
+      else {
+        const oldW = el.width;
+        el.text = el.originalText != null ? el.originalText : el.text;
+        measureFreeText(el);
+        if (el.textAlign === 'center') el.x -= (el.width - oldW) / 2;
+        else if (el.textAlign === 'right') el.x -= el.width - oldW;
+        SP.bump(el);
+      }
     }
+    for (const el of state.elements) if (el.type === 'arrow' && (el.startBinding || el.endBinding)) updateArrowBinding(el);
     scheduleRender();
+  }
+
+  function whenFontsReady(fn) {
+    if (document.fonts && document.fonts.load) document.fonts.load('20px Kalam').then(fn).catch(() => {});
+  }
+
+  function remeasureTexts() {
+    layoutAll();
+    if (history.index >= 0) history.stack[history.index] = snapshot();
   }
 
   function init() {
@@ -2542,7 +2575,7 @@
     commit();
     onSelectionChange();
     setCursor(toolCursor());
-    if (document.fonts && document.fonts.load) document.fonts.load('20px Kalam').then(remeasureTexts).catch(() => {});
+    whenFontsReady(remeasureTexts);
 
     window.addEventListener('resize', () => { resize(); renderProps(); if (state.editingText) positionEditor(); });
     uiCanvas.addEventListener('pointerdown', onPointerDown);
@@ -2687,7 +2720,7 @@
     scheduleRender();
 
     // a small hook for tests and the console
-    window.sketchpad = { state, commit, setTool, render, toScreen, toScene, getEl, history };
+    window.sketchpad = { state, commit, setTool, render, toScreen, toScene, getEl, history, loadScene, layoutAll, sceneJSON: () => SP.sceneFile(state.elements, state.files, state) };
   }
 
   init();

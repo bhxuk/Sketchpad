@@ -6,11 +6,26 @@ Sketchpad reads and writes the `.excalidraw` file format, so drawings move freel
 
 No build step, no server code, no Docker. It is plain HTML, CSS and JavaScript.
 
+**Use it:** [bhxuk.com/sketchpad](https://bhxuk.com/sketchpad/) · **Guide and examples:** [bhxuk.com/sketchpad/about](https://bhxuk.com/sketchpad/about/)
+
+## Examples
+
+Click one to open it in Sketchpad, ready to edit. The files are in [`examples/`](examples/).
+
+| | |
+|---|---|
+| [![Password reset flowchart](docs/img/flowchart.svg)](https://bhxuk.com/sketchpad/#example=flowchart) | [![Deployment diagram](docs/img/architecture.svg)](https://bhxuk.com/sketchpad/#example=architecture) |
+| **Flowchart:** decisions, colour-coded outcomes, a dashed loop | **Deployment diagram:** fills, bent arrows, dotted connectors |
+| [![App wireframe](docs/img/wireframe.svg)](https://bhxuk.com/sketchpad/#example=wireframe) | [![Brainstorm board](docs/img/brainstorm.svg)](https://bhxuk.com/sketchpad/#example=brainstorm) |
+| **Wireframe:** clean architect lines with red callouts | **Brainstorm:** sticky notes, connectors and a freehand star |
+
+Any copy of Sketchpad opens a bundled example with `#example=<name>` on the end of its address.
+
 ## Running it
 
 - **Locally:** open `index.html` in a browser. That's it.
 - **On a web server:** upload the whole folder (for example to `/public_html/sketchpad/` over SFTP). Any static host works, Apache included.
-- **GitHub Pages:** Settings → Pages → Deploy from branch → `main` / root.
+- **GitHub Pages:** Settings → Pages → Deploy from branch → `main` / root for the app, or `main` / `docs` for the landing page.
 
 Drawings save automatically in the browser's local storage, so a refresh never loses work. Use **Save to file** for anything you want to keep long term or move between machines.
 
@@ -77,14 +92,20 @@ Press `?` in the app for the full list.
 ## Project layout
 
 ```
-index.html        page shell, menus and dialogs
+index.html        the app: page shell, menus and dialogs
 css/app.css       all styling, light and dark themes
 js/core.js        element model, geometry, hit testing, rendering, import and export
 js/app.js         state, tools, mouse/touch/keyboard input, history, panels
 js/icons.js       line icons
 vendor/rough.js   rough.js 4.6.6 (MIT), the hand-drawn renderer
 fonts/            Kalam handwriting font (SIL Open Font License)
+examples/         example drawings, opened with #example=<name>
+docs/             landing page (served at bhxuk.com/sketchpad/about/, or GitHub Pages from /docs)
 ```
+
+## Publishing to bhxuk.com
+
+The live copy lives in the `bhxuk/_bhxuk` repo under `public_html/sketchpad/`, with `docs/` copied to `public_html/sketchpad/about/`. Pushing that repo deploys it. When you change CSS or JS here, bump the `?v=` number on the links in `index.html` so browsers pick up the new files.
 
 The browser console exposes `window.sketchpad` (state, history and a few helpers) for debugging.
 
